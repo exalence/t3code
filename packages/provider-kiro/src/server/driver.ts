@@ -15,7 +15,13 @@ import {
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import {
+  makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilitiesResolver,
+  resolveProviderMaintenanceCapabilitiesEffect,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -30,11 +36,28 @@ import { makeKiroTextGeneration } from "./textGeneration.ts";
 
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
 
-// Kiro CLI updates itself (installer script or Homebrew cask), so T3 offers no update action.
-const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
-  provider: KIRO_DRIVER_KIND,
-  packageName: null,
-});
+// `kiro-cli update` updates the install that owns the binary, so the resolved
+// executable is its own updater. Kiro is not on npm, so there is no package to
+// compare versions against. No executable means nothing to update.
+const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
+  resolve: (context) =>
+    Effect.succeed(
+      context
+        ? makeProviderMaintenanceCapabilities({
+            provider: KIRO_DRIVER_KIND,
+            packageName: null,
+            updateExecutable: context.resolvedCommandPath,
+            updateArgs: ["update", "--non-interactive"],
+            updateLockKey: "kiro",
+            platform: context.platform,
+            env: context.env,
+          })
+        : makeManualOnlyProviderMaintenanceCapabilities({
+            provider: KIRO_DRIVER_KIND,
+            packageName: null,
+          }),
+    ),
+};
 
 export type KiroDriverEnv =
   | KiroAdapterV2DriverEnv
@@ -57,6 +80,8 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const host = yield* ProviderHost.ProviderHost;
       const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -73,6 +98,17 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
       const toDriverError = (detail: string) => (cause: unknown) =>
         new ProviderDriverError({ driver: KIRO_DRIVER_KIND, instanceId, detail, cause });
+
+      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnv,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      );
 
       const orchestrationAdapter = yield* KiroAdapterV2Driver.create({
         instanceId,
@@ -96,7 +132,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
 
       const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
-        resolveMaintenance: () => Effect.succeed(MAINTENANCE),
+        resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
