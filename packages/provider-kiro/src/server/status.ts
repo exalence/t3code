@@ -73,31 +73,33 @@ function firstString(record: Record<string, unknown>, keys: ReadonlyArray<string
 }
 
 /**
- * Reads `kiro-cli whoami --format json`. A clean exit means a login exists;
- * the account label is best effort because the JSON shape is undocumented.
+ * Reads `kiro-cli whoami --format json`. Kiro 2.32 prints `{"account":null}`
+ * and exits 1 when logged out; a login nests its details under `account`.
+ * The account fields are undocumented, so the label and email are best effort.
  */
 export function parseKiroWhoamiOutput(output: {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
 }): ServerProviderAuth {
-  const text = `${output.stdout}\n${output.stderr}`;
-  if (output.code !== 0) {
-    return /not logged in|not authenticated|no (?:active )?(?:login|session)|kiro-cli login/i.test(
-      text,
-    )
-      ? { status: "unauthenticated" }
-      : { status: "unknown" };
-  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(output.stdout);
   } catch {
     parsed = undefined;
   }
-  const record = isRecord(parsed) ? parsed : {};
+  const account = isRecord(parsed) && "account" in parsed ? parsed.account : undefined;
+  if (account === null) {
+    return { status: "unauthenticated" };
+  }
+  if (output.code !== 0) {
+    return /not logged in|kiro-cli login/i.test(`${output.stdout}\n${output.stderr}`)
+      ? { status: "unauthenticated" }
+      : { status: "unknown" };
+  }
+  const record = isRecord(account) ? account : isRecord(parsed) ? parsed : {};
   const email = firstString(record, ["email", "username", "userName", "user"]);
-  const label = firstString(record, ["accountType", "authType", "license", "provider"]);
+  const label = firstString(record, ["accountType", "authType", "type", "provider"]);
   return {
     status: "authenticated",
     type: "cached_token",
@@ -157,29 +159,24 @@ function buildKiroModelsFromSessionSetup(
   return [kiroDefaultModel(capabilities), ...discovered];
 }
 
-const runKiroCliCommand = (
+const runKiroCliCommand = Effect.fn("KiroProviderStatus.runKiroCliCommand")(function* (
   settings: KiroSettings,
   args: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv,
-) =>
-  Effect.gen(function* () {
-    const command = settings.binaryPath || "kiro-cli";
-    const spawnCommand = yield* resolveSpawnCommand(command, args, { env: environment });
-    return yield* spawnAndCollect(
-      command,
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: environment,
-        shell: spawnCommand.shell,
-      }),
-    );
-  });
+) {
+  const command = settings.binaryPath || "kiro-cli";
+  const spawnCommand = yield* resolveSpawnCommand(command, args, { env: environment });
+  return yield* spawnAndCollect(
+    command,
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      env: environment,
+      shell: spawnCommand.shell,
+    }),
+  );
+});
 
-const discoverKiroModelsViaAcp = (
-  settings: KiroSettings,
-  environment: NodeJS.ProcessEnv,
-  cwd: string,
-) =>
-  Effect.gen(function* () {
+const discoverKiroModelsViaAcp = Effect.fn("KiroProviderStatus.discoverKiroModelsViaAcp")(
+  function* (settings: KiroSettings, environment: NodeJS.ProcessEnv, cwd: string) {
     const runtime = yield* makeKiroAcpRuntime({
       kiroSettings: settings,
       environment,
@@ -188,30 +185,30 @@ const discoverKiroModelsViaAcp = (
     });
     const started = yield* runtime.start();
     return buildKiroModelsFromSessionSetup(started.sessionSetupResult);
-  }).pipe(Effect.scoped);
+  },
+  Effect.scoped,
+);
 
-export function buildInitialKiroProviderSnapshot(
-  settings: KiroSettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
-    const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    return buildServerProvider({
-      presentation: KIRO_PRESENTATION,
-      enabled: settings.enabled,
-      checkedAt,
-      models: kiroModelsFromSettings(settings.customModels),
-      probe: {
-        installed: settings.enabled,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: settings.enabled
-          ? "Checking Kiro CLI availability..."
-          : "Kiro is disabled in T3 Code settings.",
-      },
-    });
+export const buildInitialKiroProviderSnapshot = Effect.fn(
+  "KiroProviderStatus.buildInitialKiroProviderSnapshot",
+)(function* (settings: KiroSettings): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  return buildServerProvider({
+    presentation: KIRO_PRESENTATION,
+    enabled: settings.enabled,
+    checkedAt,
+    models: kiroModelsFromSettings(settings.customModels),
+    probe: {
+      installed: settings.enabled,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: settings.enabled
+        ? "Checking Kiro CLI availability..."
+        : "Kiro is disabled in T3 Code settings.",
+    },
   });
-}
+});
 
 export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(function* (
   settings: KiroSettings,

@@ -45,7 +45,7 @@ it.layer(NodeServices.layer)("Kiro provider", (it) => {
       const snapshot = yield* checkKiroProviderStatus(settings, process.env, kiro.directory);
 
       expect(snapshot.status).toBe("ready");
-      expect(snapshot.version).toBe("2.29.0");
+      expect(snapshot.version).toBe("2.32.0");
       expect(snapshot.auth).toMatchObject({ status: "authenticated", email: "dev@example.com" });
       expect(snapshot.models.map((model) => model.slug)).toEqual([
         "default",
@@ -137,9 +137,25 @@ it("parses whoami output", () => {
     status: "authenticated",
     label: "Kiro account",
   });
+  // Kiro CLI 2.32.0, logged out: `whoami --format json` and plain `whoami`.
+  expect(parseKiroWhoamiOutput({ code: 1, stdout: '{"account":null}\n', stderr: "" })).toEqual({
+    status: "unauthenticated",
+  });
+  expect(parseKiroWhoamiOutput({ code: 1, stdout: "Not logged in\n", stderr: "" })).toEqual({
+    status: "unauthenticated",
+  });
   expect(
-    parseKiroWhoamiOutput({ code: 1, stdout: "", stderr: "Not logged in. Run kiro-cli login" }),
-  ).toEqual({ status: "unauthenticated" });
+    parseKiroWhoamiOutput({
+      code: 0,
+      stdout: '{"account":{"accountType":"BuilderId","email":"a@b.dev"}}',
+      stderr: "",
+    }),
+  ).toEqual({
+    status: "authenticated",
+    type: "cached_token",
+    label: "Kiro (BuilderId)",
+    email: "a@b.dev",
+  });
   expect(parseKiroWhoamiOutput({ code: 1, stdout: "", stderr: "network down" })).toEqual({
     status: "unknown",
   });

@@ -76,81 +76,83 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
   },
   configSchema: KiroSettings,
   defaultConfig: (): KiroSettings => decodeKiroSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
-    Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const host = yield* ProviderHost.ProviderHost;
-      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
-      const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: KIRO_DRIVER_KIND,
-        instanceId,
-      });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: KIRO_DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
-      const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
-      const toDriverError = (detail: string) => (cause: unknown) =>
-        new ProviderDriverError({ driver: KIRO_DRIVER_KIND, instanceId, detail, cause });
+  create: Effect.fn("KiroDriver.create")(function* ({
+    instanceId,
+    displayName,
+    accentColor,
+    environment,
+    enabled,
+    config,
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const host = yield* ProviderHost.ProviderHost;
+    const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    const continuationIdentity = defaultProviderContinuationIdentity({
+      driverKind: KIRO_DRIVER_KIND,
+      instanceId,
+    });
+    const stampIdentity = withInstanceIdentity({
+      instanceId,
+      driverKind: KIRO_DRIVER_KIND,
+      displayName,
+      accentColor,
+      continuationGroupKey: continuationIdentity.continuationKey,
+    });
+    const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
+    const toDriverError = (detail: string) => (cause: unknown) =>
+      new ProviderDriverError({ driver: KIRO_DRIVER_KIND, instanceId, detail, cause });
 
-      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-          binaryPath: effectiveConfig.binaryPath,
-          env: processEnv,
-        }).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
-      );
-
-      const orchestrationAdapter = yield* KiroAdapterV2Driver.create({
-        instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(Effect.mapError(toDriverError("Failed to build Kiro orchestration adapter.")));
-      const textGeneration = yield* makeKiroTextGeneration(effectiveConfig, processEnv);
-
-      const checkProvider = checkKiroProviderStatus(
-        effectiveConfig,
-        processEnv,
-        host.paths.cwd,
-      ).pipe(
-        Effect.map(stampIdentity),
-        Effect.provideService(Crypto.Crypto, crypto),
+    const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+      resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+        binaryPath: effectiveConfig.binaryPath,
+        env: processEnv,
+      }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+    );
 
-      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
-        resolveMaintenance,
-        getSettings: snapshotSettings.getSettings,
-        streamSettings: snapshotSettings.streamSettings,
-        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-        initialSnapshot: (settings) =>
-          buildInitialKiroProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
-        checkProvider,
-      }).pipe(Effect.mapError(toDriverError("Failed to build Kiro snapshot.")));
+    const orchestrationAdapter = yield* KiroAdapterV2Driver.create({
+      instanceId,
+      displayName,
+      accentColor,
+      environment,
+      enabled,
+      config,
+    }).pipe(Effect.mapError(toDriverError("Failed to build Kiro orchestration adapter.")));
+    const textGeneration = yield* makeKiroTextGeneration(effectiveConfig, processEnv);
 
-      return {
-        instanceId,
-        driverKind: KIRO_DRIVER_KIND,
-        continuationIdentity,
-        displayName,
-        accentColor,
-        enabled,
-        snapshot,
-        orchestrationAdapter,
-        textGeneration,
-      } satisfies ProviderInstance;
-    }),
+    const checkProvider = checkKiroProviderStatus(effectiveConfig, processEnv, host.paths.cwd).pipe(
+      Effect.map(stampIdentity),
+      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+    const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
+      resolveMaintenance,
+      getSettings: snapshotSettings.getSettings,
+      streamSettings: snapshotSettings.streamSettings,
+      haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      initialSnapshot: (settings) =>
+        buildInitialKiroProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+      checkProvider,
+    }).pipe(Effect.mapError(toDriverError("Failed to build Kiro snapshot.")));
+
+    return {
+      instanceId,
+      driverKind: KIRO_DRIVER_KIND,
+      continuationIdentity,
+      displayName,
+      accentColor,
+      enabled,
+      snapshot,
+      orchestrationAdapter,
+      textGeneration,
+    } satisfies ProviderInstance;
+  }),
 };

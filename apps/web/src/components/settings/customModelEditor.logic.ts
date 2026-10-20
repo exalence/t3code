@@ -82,6 +82,15 @@ export const DESCRIPTOR_PRESETS_BY_KIND: Partial<
   [ProviderDriverKind.make("grok")]: [
     { id: "reasoningEffort", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
   ],
+  // Kiro's own effort config option (`effortLevel`), which also offers "max".
+  [ProviderDriverKind.make("kiro")]: [
+    {
+      id: "effortLevel",
+      label: "Effort",
+      type: "select",
+      choices: [...EFFORT_CHOICES, { id: "max", label: "Max" }],
+    },
+  ],
   [ProviderDriverKind.make("pi")]: [
     {
       id: "thinking",

@@ -52,23 +52,22 @@ interface KiroAcpRuntimeInput extends Omit<
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-export const makeKiroAcpRuntime = (
+export const makeKiroAcpRuntime = Effect.fn("KiroAcpSupport.makeKiroAcpRuntime")(function* (
   input: KiroAcpRuntimeInput,
-): Effect.Effect<
+): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const { kiroSettings, environment, ...options } = input;
-    const context = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...options,
-        spawn: buildKiroAcpSpawnInput(kiroSettings, input.cwd, environment),
-      }),
-    );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
-  });
+> {
+  const { kiroSettings, environment, ...options } = input;
+  const context = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...options,
+      spawn: buildKiroAcpSpawnInput(kiroSettings, input.cwd, environment),
+    }),
+  );
+  return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
+});
 
 /** The T3 slug for a model selection; blank means the session's own model. */
 export function resolveKiroModelId(model: string | null | undefined): string {
@@ -90,15 +89,18 @@ function selectValues(option: EffectAcpSchema.SessionConfigOption): ReadonlyArra
  * `session/set_model`. A model the session does not offer is not sent: the
  * session keeps its current model rather than failing the turn.
  */
-export const applyKiroModelSelection = (input: {
-  readonly runtime: Pick<
-    AcpSessionRuntime.AcpSessionRuntime["Service"],
-    "getConfigOptions" | "setModel" | "setSessionModel"
-  >;
-  readonly startResult: Pick<AcpSessionRuntime.AcpSessionRuntimeStartResult, "sessionSetupResult">;
-  readonly requestedModelId: string;
-}): Effect.Effect<string | undefined, EffectAcpErrors.AcpError> =>
-  Effect.gen(function* () {
+export const applyKiroModelSelection = Effect.fn("KiroAcpSupport.applyKiroModelSelection")(
+  function* (input: {
+    readonly runtime: Pick<
+      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      "getConfigOptions" | "setModel" | "setSessionModel"
+    >;
+    readonly startResult: Pick<
+      AcpSessionRuntime.AcpSessionRuntimeStartResult,
+      "sessionSetupResult"
+    >;
+    readonly requestedModelId: string;
+  }): Effect.fn.Return<string | undefined, EffectAcpErrors.AcpError> {
     const configOptions = yield* input.runtime.getConfigOptions;
     const modelOption = configOptions.find((option) => option.category === "model");
     const legacyModels = input.startResult.sessionSetupResult.models ?? undefined;
@@ -125,4 +127,5 @@ export const applyKiroModelSelection = (input: {
       return requested;
     }
     return currentModelId;
-  });
+  },
+);

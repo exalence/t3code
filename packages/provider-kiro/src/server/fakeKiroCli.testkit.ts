@@ -2,7 +2,8 @@
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 
 /**
- * A `kiro-cli` stand-in. `--version` and `whoami` answer like the real CLI;
+ * A `kiro-cli` stand-in. `--version`, `whoami` and the logged-out `acp`
+ * failure answer like Kiro CLI 2.32.0;
  * `acp` speaks Kiro V3's ACP surface: models and effort as session config
  * options, no `session/set_model`. Every argv and request is appended to
  * `logPath` as JSON lines so tests can assert on the wire.
@@ -30,18 +31,26 @@ const log = (entry) => NodeFS.appendFileSync(process.env.FAKE_KIRO_LOG, JSON.str
 log({ argv: args });
 
 if (args[0] === "--version") {
-  process.stdout.write("kiro-cli 2.29.0\n");
+  process.stdout.write("kiro-cli 2.32.0\n");
   process.exit(0);
 }
 if (args[0] === "whoami") {
   if (process.env.FAKE_KIRO_LOGGED_IN !== "1") {
-    process.stderr.write("error: You are not logged in, please log in with kiro-cli login\n");
+    // Kiro CLI 2.32.0 output when logged out.
+    process.stdout.write('{"account":null}\n');
     process.exit(1);
   }
-  process.stdout.write(JSON.stringify({ accountType: "Builder ID", email: "dev@example.com" }) + "\n");
+  process.stdout.write(
+    JSON.stringify({ account: { accountType: "BuilderId", email: "dev@example.com" } }) + "\n",
+  );
   process.exit(0);
 }
 if (args[0] !== "acp") process.exit(2);
+if (process.env.FAKE_KIRO_LOGGED_IN !== "1") {
+  // Kiro CLI 2.32.0: logged out, acp exits before answering initialize.
+  process.stderr.write("error: You are not logged in, please log in with kiro-cli login\n");
+  process.exit(1);
+}
 
 const sessionId = "kiro-session-1";
 const config = { model: "auto", effortLevel: "medium" };
@@ -82,7 +91,7 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
     case "initialize":
       result = {
         protocolVersion: 1,
-        agentInfo: { name: "kiro-cli", version: "2.29.0" },
+        agentInfo: { name: "kiro-cli", version: "2.32.0" },
         agentCapabilities: { loadSession: true, promptCapabilities: { image: true } },
         authMethods: [],
       };

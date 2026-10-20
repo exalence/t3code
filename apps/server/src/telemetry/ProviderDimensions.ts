@@ -14,6 +14,7 @@ const VENDOR_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
   "cursor",
   "grok",
+  "kiro",
   "antigravity",
 ]);
 
